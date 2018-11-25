@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	yaml "gopkg.in/yaml.v2"
 )
 
 type Reservation struct {
@@ -24,19 +26,20 @@ type Reservation struct {
 }
 
 type ChargerInfo struct {
-	Location string `json:"location"`
-	UUID     string `json:"uuid"`
-	Port     int    `json:"port"`
+	Location struct {
+		Latitude   float32 `json:"lat" yaml:"latitude"`
+		Longtitude float32 `json:"lng" yaml:"longtitude"`
+	} `json:"location" yaml:"location"`
+	UUID string `json:"uuid" yaml:"uuid"`
+	Port int    `json:"port" yaml:"port"`
 }
 
-const serverUrl = "http://10.100.32.197:5012/chargers"
+const serverUrl = "http://10.100.32.197:5012/api/chargers/post"
+const config_path = "config.yml"
 
 var reservations map[string]Reservation
 
-var chargerInfo = ChargerInfo{
-	Location: "60.1864515,24.8289499",
-	UUID:     "06B49E6F-E63F-4295-B5F9-5769A6DE7351",
-}
+var chargerInfo = ChargerInfo{}
 
 func init() {
 	reservations = make(map[string]Reservation)
@@ -48,6 +51,7 @@ func register() error {
 	if err != nil {
 		log.Printf("Error: %s", err)
 	}
+	log.Printf("Postring config: %s", postJSON)
 	req, _ := http.NewRequest("POST", serverUrl, bytes.NewBuffer(postJSON))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -65,13 +69,16 @@ func register() error {
 		return err
 	}
 	log.Println("response Body:", string(body))
+	if resp.StatusCode != 200 {
+		return errors.New("Status code is not 200")
+	}
 	log.Printf("Registration done")
 	return nil
 }
 
 func registerLoop() {
 	if err := register(); err != nil {
-		log.Printf("Error registering: %#v", err)
+		log.Printf("Error registering: %#v", err.Error())
 		time.Sleep(10 * time.Second)
 		registerLoop()
 	}
@@ -102,7 +109,14 @@ func serverReserveDeletion(c *gin.Context) {
 }
 
 func main() {
-	// go register()
+	content, err := ioutil.ReadFile(config_path)
+	if err != nil {
+		log.Fatalf("Problem reading configuration file: %v", err)
+	}
+	err = yaml.Unmarshal(content, &chargerInfo)
+	if err != nil {
+		log.Fatalf("Error parsing configuration file: %v", err)
+	}
 	router := gin.Default()
 	router.GET("/config", func(c *gin.Context) {
 		c.JSON(200, chargerInfo)
@@ -113,7 +127,7 @@ func main() {
 	router.POST("/reserve", serverReserveCreation)
 	router.DELETE("/reserve", serverReserveDeletion)
 
-	listener, err := net.Listen("tcp4", "0.0.0.0:8080")
+	listener, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		panic(err)
 	}
